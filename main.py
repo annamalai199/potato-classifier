@@ -159,9 +159,3 @@ async def download_file(filename: str):
         return JSONResponse(content={"error": "File not found"}, status_code=404)
     logging.info(f"Serving video: {file_path}")
     return FileResponse(file_path, media_type="video/mp4", filename=filename)
-
-# -------------------------
-# Run app
-# -------------------------
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
