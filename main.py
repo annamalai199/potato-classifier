@@ -31,10 +31,18 @@ app.add_middleware(
 )
 
 # -------------------------
-# Load model
+# Load model safely
 # -------------------------
-MODEL = tf.keras.models.load_model("saved_models/1.keras")
+MODEL = None
+MODEL_PATH = "saved_models/1.keras"
 CLASS_NAMES = ["Early Blight", "Late Blight", "Healthy"]
+
+if os.path.exists(MODEL_PATH):
+    logging.info(f"Loading model from {MODEL_PATH} ...")
+    MODEL = tf.keras.models.load_model(MODEL_PATH)
+    logging.info("✅ Model loaded successfully")
+else:
+    logging.error(f"❌ Model file not found at {MODEL_PATH}. Upload it to Railway project!")
 
 # -------------------------
 # Health check
@@ -56,6 +64,12 @@ def read_file_as_image(data) -> np.ndarray:
 # -------------------------
 @app.post("/predict/image")
 async def predict_image(file: UploadFile = File(...)):
+    if MODEL is None:
+        return JSONResponse(
+            content={"error": "Model not loaded. Please upload 'saved_models/1.keras' to Railway."},
+            status_code=500,
+        )
+
     logging.info(f"Received image: {file.filename}")
     image = read_file_as_image(await file.read())
     img_batch = np.expand_dims(image, 0)
@@ -72,6 +86,12 @@ async def predict_image(file: UploadFile = File(...)):
 # -------------------------
 @app.post("/predict/video")
 async def predict_video(file: UploadFile = File(...)):
+    if MODEL is None:
+        return JSONResponse(
+            content={"error": "Model not loaded. Please upload 'saved_models/1.keras' to Railway."},
+            status_code=500,
+        )
+
     logging.info(f"Received video: {file.filename}")
 
     # Save video temporarily
@@ -138,7 +158,6 @@ async def predict_video(file: UploadFile = File(...)):
     else:
         final_class, avg_confidence = "No frames processed", 0.0
 
-    # ✅ Return relative path, Flutter will prepend backendUrl
     video_url = f"/download/{os.path.basename(out_path)}"
     logging.info(f"Processed video available at: {video_url}")
 
@@ -159,3 +178,9 @@ async def download_file(filename: str):
         return JSONResponse(content={"error": "File not found"}, status_code=404)
     logging.info(f"Serving video: {file_path}")
     return FileResponse(file_path, media_type="video/mp4", filename=filename)
+
+# -------------------------
+# Run app
+# -------------------------
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
