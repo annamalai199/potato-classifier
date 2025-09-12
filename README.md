@@ -1,0 +1,1 @@
+A FastAPI service that exposes a deep-learning potato disease classifier (image) and a YOLO-based video prediction pipeline. Designed to be containerized and deployed on Railway. Includes endpoints for image prediction, video prediction (frame-by-frame detection + classification), health check, and file downloads.
