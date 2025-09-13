@@ -11,15 +11,13 @@ import tempfile
 import os
 from typing import List
 import logging
+import subprocess
+from uuid import uuid4
 
-# -------------------------
-# Logging
-# -------------------------
+
 logging.basicConfig(level=logging.INFO)
 
-# -------------------------
-# Initialize app
-# -------------------------
+
 app = FastAPI(title="Potato Disease Prediction API")
 
 app.add_middleware(
@@ -60,6 +58,27 @@ def read_file_as_image(data) -> np.ndarray:
     return np.array(image)
 
 # -------------------------
+# Helper: re-encode video (fix playback issue)
+# -------------------------
+def reencode_video(input_path: str) -> str:
+    output_path = os.path.join(tempfile.gettempdir(), f"{uuid4().hex}_final.mp4")
+    command = [
+        "ffmpeg", "-y", "-i", input_path,
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "23",
+        "-pix_fmt", "yuv420p",
+        output_path
+    ]
+    try:
+        subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        logging.info(f"Re-encoded video saved at {output_path}")
+        return output_path
+    except Exception as e:
+        logging.error(f"❌ FFmpeg error: {e}")
+        return input_path  # fallback
+
+# -------------------------
 # Image Prediction Endpoint
 # -------------------------
 @app.post("/predict/image")
@@ -94,17 +113,17 @@ async def predict_video(file: UploadFile = File(...)):
 
     logging.info(f"Received video: {file.filename}")
 
-    # Save video temporarily
+    # Save input video
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
         temp_video.write(await file.read())
         video_path = temp_video.name
 
     cap = cv2.VideoCapture(video_path)
 
-    # Prepare output video
-    out_path = os.path.join(
+    # Output path
+    raw_out_path = os.path.join(
         tempfile.gettempdir(),
-        os.path.basename(video_path).replace(".mp4", "_predicted.mp4")
+        os.path.basename(video_path).replace(".mp4", "_predicted_raw.mp4")
     )
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 20
@@ -112,11 +131,10 @@ async def predict_video(file: UploadFile = File(...)):
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 480
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
+    out = cv2.VideoWriter(raw_out_path, fourcc, fps, (width, height))
 
     frame_predictions: List[str] = []
     frame_confidences: List[float] = []
-
     frame_interval = 15
     frame_count = 0
 
@@ -152,13 +170,16 @@ async def predict_video(file: UploadFile = File(...)):
     out.release()
     os.remove(video_path)
 
+    # ✅ Re-encode video for Flutter compatibility
+    final_out_path = reencode_video(raw_out_path)
+
     if frame_predictions:
         final_class = max(set(frame_predictions), key=frame_predictions.count)
         avg_confidence = float(np.mean(frame_confidences))
     else:
         final_class, avg_confidence = "No frames processed", 0.0
 
-    video_url = f"/download/{os.path.basename(out_path)}"
+    video_url = f"/download/{os.path.basename(final_out_path)}"
     logging.info(f"Processed video available at: {video_url}")
 
     return {
@@ -167,9 +188,7 @@ async def predict_video(file: UploadFile = File(...)):
         "video_url": video_url
     }
 
-# -------------------------
-# Serve Annotated Video
-# -------------------------
+
 @app.get("/download/{filename}")
 async def download_file(filename: str):
     file_path = os.path.join(tempfile.gettempdir(), filename)
@@ -179,8 +198,5 @@ async def download_file(filename: str):
     logging.info(f"Serving video: {file_path}")
     return FileResponse(file_path, media_type="video/mp4", filename=filename)
 
-# -------------------------
-# Run app
-# -------------------------
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
